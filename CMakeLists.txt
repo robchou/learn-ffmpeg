@@ -4,6 +4,7 @@ project(ffmpeg-tutorial)
 set(ffmpeg_tutorial_source_files
         tutorial01.c
         tutorial02.c
+        hw_decode.c
         )
 
 add_definitions(
