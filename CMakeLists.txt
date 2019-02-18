@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.2)
-project(ffmpeg-tutorial)
+project(learn-ffmpeg)
 
 set(ffmpeg_tutorial_source_files
         tutorial01.c
