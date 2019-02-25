@@ -4,11 +4,16 @@ project(learn-ffmpeg)
 set(ffmpeg_tutorial_source_files
         tutorial01.c
         tutorial02.c
+        tutorial03.c
         hw_decode.c
         )
 
 add_definitions(
         -D_THREAD_SAFE
+)
+
+include_directories(
+        /usr/local/include
 )
 
 link_directories(
