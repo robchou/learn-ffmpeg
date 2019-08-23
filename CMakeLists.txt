@@ -1,39 +1,35 @@
-cmake_minimum_required(VERSION 3.2)
+cmake_minimum_required(VERSION 2.8)
 project(ffmpeg-tutorial)
 
-set(ffmpeg_tutorial_source_files
-        tutorial01.c
-        tutorial02.c
-        )
+set(CMAKE_C_STANDARD 99)
 
-include_directories(
-        /usr/local/Cellar/ffmpeg@2.8/2.8.15_3/include
-        /usr/local/include/SDL
-)
+set(ffmpeg_tutorial_source_files
+    tutorial01.c
+    tutorial02.c
+    )
 
 add_definitions(
-        -D_GNU_SOURCE=1
-        -D_THREAD_SAFE
-)
+    -D_THREAD_SAFE
+    )
 
-find_library(COCOA_FRAMEWORK Cocoa)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FFMPEG REQUIRED libavcodec libavformat libavutil libswscale libswresample)
+pkg_check_modules(SDL REQUIRED sdl)
+
+include_directories(
+    ${FFMPEG_INCLUDE_DIRS}
+    )
 
 link_directories(
-        /usr/local/Cellar/ffmpeg@2.8/2.8.15_3/lib
-        /usr/local/lib
-)
+    ${FFMPEG_LIBRARY_DIRS}
+    )
 
 foreach(tutorial ${ffmpeg_tutorial_source_files})
     string(REPLACE ".c" "" exec ${tutorial})
     add_executable(${exec} ${tutorial})
     target_link_libraries(${exec}
-            ${COCOA_FRAMEWORK}
-            avformat
-            avcodec
-            swresample
-            swscale
-            avutil
-            SDLmain
-            SDL
-            )
+        ${FFMPEG_LIBRARIES}
+        ${SDL2_LIBRARIES}
+        pthread
+        )
 endforeach()
