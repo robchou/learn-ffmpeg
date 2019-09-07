@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.2)
-project(ffmpeg-tutorial)
+project(learn-ffmpeg)
 
 set(CMAKE_C_STANDARD 99)
 
@@ -13,6 +13,7 @@ set(ffmpeg_tutorial_source_files
     tutorial03.c
     tutorial04.c
     tutorial05.c
+    tutorial06.c
     )
 
 # make sure ffmpeg 2.8.x(2.8.5 and 2.8.15 tested) and sdl1.2 list in PKG_CONFIG_PATH
