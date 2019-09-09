@@ -1,8 +1,10 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavformat/avio.h>
+#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 #include <libavutil/avstring.h>
+#include <libavutil/opt.h>
 #include <libavutil/time.h>
 
 #include <SDL.h>
@@ -100,6 +102,7 @@ typedef struct VideoState {
 
     AVIOContext     *io_context;
     struct SwsContext *sws_ctx;
+    struct SwsContext *sws_ctx_audio;
 } VideoState;
 
 enum {
@@ -302,6 +305,99 @@ int synchronize_audio(VideoState *is, short *samples, int samples_size, double p
     return samples_size;
 }
 
+int decode_frame_from_packet(VideoState *is, AVFrame decoded_frame)
+{
+    int64_t src_ch_layout, dst_ch_layout;
+    int src_rate, dst_rate;
+    uint8_t **src_data = NULL, **dst_data = NULL;
+    int src_nb_channels = 0, dst_nb_channels = 0;
+    int src_linesize, dst_linesize;
+    int src_nb_samples, dst_nb_samples, max_dst_nb_samples;
+    enum AVSampleFormat src_sample_fmt, dst_sample_fmt;
+    int dst_bufsize;
+    int ret;
+
+    src_nb_samples = decoded_frame.nb_samples;
+    src_linesize = (int) decoded_frame.linesize;
+    src_data = decoded_frame.data;
+
+    if (decoded_frame.channel_layout == 0) {
+        decoded_frame.channel_layout = av_get_default_channel_layout(decoded_frame.channels);
+    }
+
+    src_rate = decoded_frame.sample_rate;
+    dst_rate = decoded_frame.sample_rate;
+    src_ch_layout = decoded_frame.channel_layout;
+    dst_ch_layout = decoded_frame.channel_layout;
+    src_sample_fmt = decoded_frame.format;
+    dst_sample_fmt = AV_SAMPLE_FMT_S16;
+
+    av_opt_set_int(is->sws_ctx_audio, "in_channel_layout", src_ch_layout, 0);
+    av_opt_set_int(is->sws_ctx_audio, "out_channel_layout", dst_ch_layout,  0);
+    av_opt_set_int(is->sws_ctx_audio, "in_sample_rate", src_rate, 0);
+    av_opt_set_int(is->sws_ctx_audio, "out_sample_rate", dst_rate, 0);
+    av_opt_set_sample_fmt(is->sws_ctx_audio, "in_sample_fmt", src_sample_fmt, 0);
+    av_opt_set_sample_fmt(is->sws_ctx_audio, "out_sample_fmt", dst_sample_fmt,  0);
+
+    /* initialize the resampling context */
+    if ((ret = swr_init(is->sws_ctx_audio)) < 0) {
+        fprintf(stderr, "Failed to initialize the resampling context\n");
+        return -1;
+    }
+
+    /* allocate source and destination samples buffers */
+    src_nb_channels = av_get_channel_layout_nb_channels(src_ch_layout);
+    ret = av_samples_alloc_array_and_samples(&src_data, &src_linesize, src_nb_channels, src_nb_samples, src_sample_fmt, 0);
+    if (ret < 0) {
+        fprintf(stderr, "Could not allocate source samples\n");
+        return -1;
+    }
+
+    /* compute the number of converted samples: buffering is avoided
+     * ensuring that the output buffer will contain at least all the
+     * converted input samples */
+    max_dst_nb_samples = dst_nb_samples = av_rescale_rnd(src_nb_samples, dst_rate, src_rate, AV_ROUND_UP);
+
+    /* buffer is going to be directly written to a rawaudio file, no alignment */
+    dst_nb_channels = av_get_channel_layout_nb_channels(dst_ch_layout);
+    ret = av_samples_alloc_array_and_samples(&dst_data, &dst_linesize, dst_nb_channels, dst_nb_samples, dst_sample_fmt, 0);
+    if (ret < 0) {
+        fprintf(stderr, "Could not allocate destination samples\n");
+        return -1;
+    }
+
+    /* compute destination number of samples */
+    dst_nb_samples = av_rescale_rnd(swr_get_delay(is->sws_ctx_audio, src_rate) + src_nb_samples, dst_rate, src_rate, AV_ROUND_UP);
+
+    /* convert to destination format */
+    ret = swr_convert(is->sws_ctx_audio, dst_data, dst_nb_samples, (const uint8_t **)decoded_frame.data, src_nb_samples);
+    if (ret < 0) {
+        fprintf(stderr, "Error while converting\n");
+        return -1;
+    }
+
+    dst_bufsize = av_samples_get_buffer_size(&dst_linesize, dst_nb_channels, ret, dst_sample_fmt, 1);
+    if (dst_bufsize < 0) {
+        fprintf(stderr, "Could not get sample buffer size\n");
+        return -1;
+    }
+
+    memcpy(is->audio_buf, dst_data[0], dst_bufsize);
+
+    if (src_data) {
+        av_freep(&src_data[0]);
+    }
+    av_freep(&src_data);
+
+    if (dst_data) {
+        av_freep(&dst_data[0]);
+    }
+    av_freep(&dst_data);
+
+    return dst_bufsize;
+}
+
+
 int audio_decode_frame(VideoState *is, double *pts_ptr) {
     int len1, data_size = 0, n;
     AVPacket *pkt = &is->audio_pkt;
@@ -318,16 +414,20 @@ int audio_decode_frame(VideoState *is, double *pts_ptr) {
             }
             if (got_frame)
             {
-                data_size =
-                        av_samples_get_buffer_size
-                                (
-                                        NULL,
-                                        is->audio_st->codec->channels,
-                                        is->audio_frame.nb_samples,
-                                        is->audio_st->codec->sample_fmt,
-                                        1
-                                );
-                memcpy(is->audio_buf, is->audio_frame.data[0], data_size);
+                if (is->audio_frame.format != AV_SAMPLE_FMT_S16) {
+                    data_size = decode_frame_from_packet(is, is->audio_frame);
+                } else {
+                    data_size =
+                            av_samples_get_buffer_size
+                                    (
+                                            NULL,
+                                            is->audio_st->codec->channels,
+                                            is->audio_frame.nb_samples,
+                                            is->audio_st->codec->sample_fmt,
+                                            1
+                                    );
+                    memcpy(is->audio_buf, is->audio_frame.data[0], data_size);
+                }
             }
             is->audio_pkt_data += len1;
             is->audio_pkt_size -= len1;
@@ -763,6 +863,12 @@ int stream_component_open(VideoState *is, int stream_index) {
             is->audio_diff_avg_count = 0;
             /* Correct audio only if larger error than this */
             is->audio_diff_threshold = 2.0 * SDL_AUDIO_BUFFER_SIZE / codecCtx->sample_rate;
+
+            is->sws_ctx_audio = swr_alloc();
+            if (!is->sws_ctx_audio) {
+                fprintf(stderr, "Could not allocate resampler context\n");
+                return -1;
+            }
 
             memset(&is->audio_pkt, 0, sizeof(is->audio_pkt));
             packet_queue_init(&is->audioq);
