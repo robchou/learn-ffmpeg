@@ -244,7 +244,7 @@ int synchronize_audio(VideoState *is, short *samples, int samples_size, double p
             } else {
                 avg_diff = is->audio_diff_cum * (1.0 - is->audio_diff_avg_coef);
                 if (fabs(avg_diff) >= is->audio_diff_threshold) {
-                    wanted_size = samples_size * ((int) (diff * is->audio_st->codec->sample_rate) * n);
+                    wanted_size = samples_size + ((int) (diff * is->audio_st->codec->sample_rate) * n);
                     min_size = samples_size * ((100 - SAMPLE_CORRECTION_PERCENT_MAX) / 100);
                     max_size = samples_size * ((100 + SAMPLE_CORRECTION_PERCENT_MAX) / 100);
                     if (wanted_size < min_size) {
@@ -436,6 +436,10 @@ void video_refresh_timer(void *userdata) {
             schedule_refresh(is, 1);
         } else {
             vp = &is->pictq[is->pictq_rindex];
+
+            is->video_current_pts = vp->pts;
+            is->video_current_pts_time = av_gettime();
+
             delay = vp->pts - is->frame_last_pts; /* the pts from last time */
             if (delay <= 0 || delay >= 1.0) {
                 /* if incorrect delay, use previous one */
@@ -741,6 +745,7 @@ int stream_component_open(VideoState *is, int stream_index) {
 
             is->frame_timer = (double)av_gettime() / 1000000.0;
             is->frame_last_delay = 40e-3;
+            is->video_current_pts_time = av_gettime();
 
             packet_queue_init(&is->videoq);
             is->video_tid = SDL_CreateThread(video_thread, is);
@@ -756,6 +761,8 @@ int stream_component_open(VideoState *is, int stream_index) {
                     NULL,
                     NULL
             );
+            codecCtx->get_buffer2 = our_get_buffer;
+            codecCtx->release_buffer = our_release_buffer;
             break;
         default:
             break;
@@ -920,6 +927,7 @@ int main(int argc, char* argv[])
 
     schedule_refresh(is, 40);
 
+    is->av_sync_type = DEFAULT_AV_SYNC_TYPE;
     is->parse_tid = SDL_CreateThread(decode_thread, is);
 
     if(!is->parse_tid) {
@@ -950,6 +958,8 @@ int main(int argc, char* argv[])
                 break;
             case FF_REFRESH_EVENT:
                 video_refresh_timer(event.user.data1);
+                break;
+            default:
                 break;
         }
     }
