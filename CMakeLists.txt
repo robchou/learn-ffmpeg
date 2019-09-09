@@ -14,6 +14,7 @@ set(ffmpeg_tutorial_source_files
     tutorial04.c
     tutorial05.c
     tutorial06.c
+    tutorial07.c
     )
 
 # make sure ffmpeg 2.8.x(2.8.5 and 2.8.15 tested) and sdl1.2 list in PKG_CONFIG_PATH
